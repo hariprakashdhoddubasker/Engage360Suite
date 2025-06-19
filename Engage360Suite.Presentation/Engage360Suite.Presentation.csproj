@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Engage360Suite.Application\Engage360Suite.Application.csproj" />
+    <ProjectReference Include="..\Engage360Suite.Infrastructure\Engage360Suite.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>Engage360Suite-WhatsApp-Local</UserSecretsId>
+  </PropertyGroup>
+
+</Project>
