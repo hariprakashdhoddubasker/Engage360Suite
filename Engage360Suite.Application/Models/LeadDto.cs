@@ -1,14 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace Engage360Suite.Application.Models
 {
-    public class LeadDto
+    public record LeadDto
     {
-        public required string Name { get; set; } = string.Empty;
-        public required string PhoneNumber { get; set; } = string.Empty;
+        [Required, MinLength(2)]
+        public required string Name { get; init; }
+
+        [Required, Phone]
+        public required string PhoneNumber { get; init; }
     }
 }

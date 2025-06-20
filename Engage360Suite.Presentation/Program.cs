@@ -1,24 +1,18 @@
 using Engage360Suite.Application.Interfaces;
 using Engage360Suite.Application.Models;
+using Engage360Suite.Infrastructure.Filters;
 using Engage360Suite.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
-
-string instanceId = builder.Configuration["WhatsApp:Pingerbot:InstanceId"]!;
-string accessToken = builder.Configuration["WhatsApp:Pingerbot:AccessToken"]!;
-string groupId = builder.Configuration["WhatsApp:Pingerbot:GroupId"]!;
-builder.Services
-       .Configure<PingerbotOptions>(
-          builder.Configuration.GetSection("WhatsApp:Pingerbot"));
-
+builder.Services.Configure<PingerbotOptions>(builder.Configuration.GetSection("WhatsApp:Pingerbot"));
 builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>(client =>
 {
     client.BaseAddress = new Uri("https://pingerbot.in/api/");
 });
-
+builder.Services.AddScoped<ApiKeyActionFilter>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -40,6 +34,5 @@ app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}")
     .WithStaticAssets();
-
 
 app.Run();

@@ -4,6 +4,7 @@ namespace Engage360Suite.Application.Interfaces
 {
     public interface IWhatsAppService
     {
-        Task<SendGroupMessageResult> SendGroupMessageAsync(string message);
+        Task<SendGroupMessageResult> SendGroupMessageAsync(string message,
+                CancellationToken cancellationToken = default);
     }
 }

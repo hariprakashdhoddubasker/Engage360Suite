@@ -1,5 +1,6 @@
 ﻿using Engage360Suite.Application.Interfaces;
 using Engage360Suite.Application.Models;
+using Engage360Suite.Infrastructure.Exceptions;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using System.Text;
@@ -15,7 +16,8 @@ namespace Engage360Suite.Infrastructure.Services
             _http = http;
             _opts = optsAccessor.Value;
         }
-        public async Task<SendGroupMessageResult> SendGroupMessageAsync(string textMessage)
+        public async Task<SendGroupMessageResult> SendGroupMessageAsync(string textMessage,
+            CancellationToken cancellationToken = default)
         {
             var payload = new
             {
@@ -27,14 +29,17 @@ namespace Engage360Suite.Infrastructure.Services
             };
             var jsonPayload = JsonConvert.SerializeObject(payload);
             using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-            var response = await _http.PostAsync("https://pingerbot.in/api/send_group", content);
+            var response = await _http.PostAsync("https://pingerbot.in/api/send_group", content, cancellationToken);
             response.EnsureSuccessStatusCode();
 
             var jsonResponse = await response.Content.ReadAsStringAsync();
-            var result = JsonConvert.DeserializeObject<SendGroupMessageResult>(jsonResponse);
+            var result = JsonConvert.DeserializeObject<SendGroupMessageResult>(jsonResponse)
+                             ?? throw new WhatsAppException("Failed to parse Pingerbot response");
 
-            if (result == null)
-                throw new InvalidOperationException("Failed to parse Pingerbot response.");
+            if (!string.Equals(result.Status, "success", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new WhatsAppException($"Pingerbot API error: {result.Message.Key.Id}");
+            }
 
             return result;
         }
