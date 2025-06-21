@@ -1,4 +1,5 @@
-﻿using Engage360Suite.Application.Interfaces;
+﻿using Asp.Versioning;
+using Engage360Suite.Application.Interfaces;
 using Engage360Suite.Application.Models;
 using Engage360Suite.Infrastructure.Exceptions;
 using Engage360Suite.Infrastructure.Filters;
@@ -7,7 +8,8 @@ using Microsoft.AspNetCore.Mvc;
 namespace Engage360Suite.Presentation.Controllers
 {
     [ApiController]
-    [Route("api/webhook")]
+    [ApiVersion("1.0")]
+    [Route("api/v{version:apiVersion}/[controller]")]
     [ServiceFilter(typeof(ApiKeyActionFilter))]
     public class WebhookController : ControllerBase
     {
