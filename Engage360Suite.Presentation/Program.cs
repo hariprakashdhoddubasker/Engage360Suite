@@ -36,6 +36,8 @@ builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>(client =>
 });
 builder.Services.AddScoped<ApiKeyActionFilter>();
 builder.Services.AddVersionedSwagger();
+builder.Services.AddSingleton<ILeadQueue, InMemoryLeadQueue>();
+builder.Services.AddHostedService<LeadProcessingService>();
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())

@@ -13,20 +13,17 @@ namespace Engage360Suite.Presentation.Controllers
     [ServiceFilter(typeof(ApiKeyActionFilter))]
     public class WebhookController : ControllerBase
     {
-        private readonly IWhatsAppService _whatsApp;
+        private readonly ILeadQueue _queue;
 
-        public WebhookController(IWhatsAppService whatsApp)
-        {
-            _whatsApp = whatsApp;
-        }
+        public WebhookController(ILeadQueue queue) => _queue = queue;
 
         [HttpPost("lead")]
-        public async Task<IActionResult> Lead([FromBody] LeadDto lead)
+        public async Task<IActionResult> Lead([FromBody] LeadDto lead, CancellationToken ct)
         {
             try
             {
-                await _whatsApp.SendGroupMessageAsync($"🆕New lead:\n{lead.Name}\n{lead.PhoneNumber}");
-                return Ok(new { success = true });
+                await _queue.EnqueueAsync(lead, ct);
+                return Accepted(new { enqueued = true });
             }
             catch (WhatsAppException ex)
             {
