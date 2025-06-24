@@ -2,6 +2,7 @@ using Asp.Versioning;
 using Asp.Versioning.ApiExplorer;
 using Engage360Suite.Application.Interfaces;
 using Engage360Suite.Application.Models;
+using Engage360Suite.Infrastructure.Configuration;
 using Engage360Suite.Infrastructure.Filters;
 using Engage360Suite.Infrastructure.Services;
 using Engage360Suite.Presentation;
@@ -30,13 +31,15 @@ apiVersioningBuilder.AddApiExplorer(setup =>
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 builder.Services.Configure<PingerbotOptions>(builder.Configuration.GetSection("WhatsApp:Pingerbot"));
+builder.Services.Configure<ServiceBusOptions>(builder.Configuration.GetSection("ServiceBus"));
 builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>(client =>
 {
     client.BaseAddress = new Uri("https://pingerbot.in/api/");
 });
 builder.Services.AddScoped<ApiKeyActionFilter>();
 builder.Services.AddVersionedSwagger();
-builder.Services.AddSingleton<ILeadQueue, InMemoryLeadQueue>();
+// builder.Services.AddSingleton<ILeadQueue, InMemoryLeadQueue>();
+builder.Services.AddSingleton<ILeadQueue, ServiceBusLeadQueue>();
 builder.Services.AddHostedService<LeadProcessingService>();
 var app = builder.Build();
 
