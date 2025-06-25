@@ -1,69 +1,81 @@
-using Asp.Versioning;
-using Asp.Versioning.ApiExplorer;
-using Engage360Suite.Application.Interfaces;
-using Engage360Suite.Application.Models;
-using Engage360Suite.Infrastructure.Configuration;
-using Engage360Suite.Infrastructure.Filters;
-using Engage360Suite.Infrastructure.Services;
-using Engage360Suite.Presentation;
-using Microsoft.Extensions.Options;
-using Microsoft.OpenApi.Models;
-using Swashbuckle.AspNetCore.SwaggerGen;
+using Engage360Suite.Presentation.Extensions;
+using Microsoft.AspNetCore.HttpOverrides;
+using Serilog;
 
-var builder = WebApplication.CreateBuilder(args);
-
-// API versioning
-var apiVersioningBuilder = builder.Services.AddApiVersioning(options =>
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
+try
 {
-    options.DefaultApiVersion = new ApiVersion(1, 0);
-    options.AssumeDefaultVersionWhenUnspecified = true;
-    options.ReportApiVersions = true;
-    options.ApiVersionReader = new UrlSegmentApiVersionReader();
-});
+    Log.Information("Starting host");
 
-// Add the ApiExplorer support to same API builder
-apiVersioningBuilder.AddApiExplorer(setup =>
-{
-    setup.GroupNameFormat = "'v'VVV";    // e.g. "v1"
-    setup.SubstituteApiVersionInUrl = true;
-});
+    var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-builder.Services.AddControllersWithViews();
-builder.Services.Configure<PingerbotOptions>(builder.Configuration.GetSection("WhatsApp:Pingerbot"));
-builder.Services.Configure<ServiceBusOptions>(builder.Configuration.GetSection("ServiceBus"));
-builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>(client =>
-{
-    client.BaseAddress = new Uri("https://pingerbot.in/api/");
-});
-builder.Services.AddScoped<ApiKeyActionFilter>();
-builder.Services.AddVersionedSwagger();
-// builder.Services.AddSingleton<ILeadQueue, InMemoryLeadQueue>();
-builder.Services.AddSingleton<ILeadQueue, ServiceBusLeadQueue>();
-builder.Services.AddHostedService<LeadProcessingService>();
-var app = builder.Build();
+    // --------------------Configure logging & configuration --------------------
+    builder.Host
+    .UseSerilog(
+        (ctx, services, cfg) => cfg
+            .ReadFrom.Configuration(ctx.Configuration)
+            .ReadFrom.Services(services)
+            .Enrich.FromLogContext());
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseVersionedSwaggerUI();
+    builder.Configuration
+       .AddJsonFile("serilog.json", optional: true, reloadOnChange: true)
+       .AddEnvironmentVariables();
 
+    // --------------------DI registrations --------------------
+    builder.Services.AddHealthChecks();
+    builder.Services.AddVersioningAndSwagger()
+                    .AddApplicationServices()
+                    .AddInfrastructureServices(builder.Configuration);
+
+    // Forwarded-headers so the app knows the real client IP / scheme
+    builder.Services.Configure<ForwardedHeadersOptions>(o =>
+    {
+        o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        o.KnownNetworks.Clear();
+        o.KnownProxies.Clear();
+    });
+
+    var app = builder.Build();
+
+    // --------------------HTTP pipeline --------------------
+    app.UseForwardedHeaders();
+    app.UseSwaggerAccordingToEnvironment()
+       .UseStaticAndRouting()
+       .MapAppEndpoints();
+
+    app.MapHealthChecks("/health");
+
+    app.Run();
 }
-else
+catch (Exception ex)
 {
-    app.UseExceptionHandler("/Home/Error");
-    app.UseHsts();
+    Log.Fatal(ex, "Host terminated unexpectedly");
+    throw;
+}
+finally
+{
+    Log.CloseAndFlush();
 }
 
-app.UseHttpsRedirection();
-app.UseRouting();
 
-app.UseAuthorization();
-app.MapControllers();
-app.MapStaticAssets();
-
-app.MapControllerRoute(
-    name: "default",
-    pattern: "{controller=Home}/{action=Index}/{id?}")
-    .WithStaticAssets();
-
-app.Run();
+/// <summary>
+/// Enables integration/functional tests to spin-up the host without
+/// touching the top-level statements.
+/// </summary>
+public static partial class Program
+{
+    public static IHostBuilder CreateHostBuilder(string[] args) =>
+        Host.CreateDefaultBuilder(args)
+            .UseSerilog()
+            .ConfigureWebHostDefaults(webBuilder =>
+            {
+                webBuilder.Configure(app =>
+                {
+                    throw new NotImplementedException(
+                        "With the minimal-hosting model Startup isn't used; " +
+                        "tests should call WebApplicationFactory<Program>.");
+                });
+            });
+}
