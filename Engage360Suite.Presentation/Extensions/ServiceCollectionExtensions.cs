@@ -10,8 +10,27 @@ using Swashbuckle.AspNetCore.SwaggerGen;
 
 namespace Engage360Suite.Presentation.Extensions
 {
+    /// <summary>
+    /// Extension methods for registering application services in DI.
+    /// </summary>
     public static class ServiceCollectionExtensions
     {
+        /// <summary>
+        /// Registers core services: health checks, API versioning, Swagger,
+        /// application services, and infrastructure services.
+        /// </summary>
+        /// <param name="services">The IServiceCollection to populate.</param>
+        /// <param name="config">The application IConfiguration.</param>
+        /// <returns>The same IServiceCollection for chaining.</returns>
+        public static IServiceCollection AddDefaultServices(this IServiceCollection services, IConfiguration config)
+        {
+            services.AddHealthChecks();
+            services.AddVersioningAndSwagger();
+            services.AddApplicationServices();
+            services.AddInfrastructureServices(config);
+            return services;
+        }
+
         public static IServiceCollection AddVersioningAndSwagger(this IServiceCollection services)
         {
             services
@@ -28,7 +47,6 @@ namespace Engage360Suite.Presentation.Extensions
                   o.SubstituteApiVersionInUrl = true;
               });
 
-            // your existing ConfigureSwaggerOptions must be registered first
             services.AddTransient<IConfigureOptions<SwaggerGenOptions>, ConfigureSwaggerOptions>();
             services.AddSwaggerGen(c =>
             {

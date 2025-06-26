@@ -4,6 +4,19 @@ namespace Engage360Suite.Presentation.Extensions
 {
     public static class ApplicationBuilderExtensions
     {
+        /// <summary>
+        /// Sets up forwarded headers, Swagger UI, static files, routing,
+        /// and maps controller & static endpoints.
+        /// </summary>
+        public static WebApplication UseApiPipeline(this WebApplication app)
+        {
+            app.UseForwardedHeaders();
+            app.UseSwaggerAccordingToEnvironment()
+               .UseStaticAndRouting()
+               .MapAppEndpoints();
+            return app;
+        }
+
         public static WebApplication UseSwaggerAccordingToEnvironment(this WebApplication app)
         {
             if (app.Environment.IsDevelopment())

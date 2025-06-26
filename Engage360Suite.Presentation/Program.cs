@@ -1,64 +1,46 @@
+using Engage360Suite.Presentation;
 using Engage360Suite.Presentation.Extensions;
-using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
 
-Log.Logger = new LoggerConfiguration()
-    .WriteTo.Console()
-    .CreateBootstrapLogger();
+// Entry point and composition root for Engage360Suite API.
+// Configures logging, services, middleware pipeline, and starts the host.
+
+Log.Logger = LoggingBootstrap.CreateLogger();
+// Bootstrap logger so we capture any failures during host build
+
 try
 {
     Log.Information("Starting host");
 
-    var builder = WebApplication.CreateBuilder(args);
+    // Build host and load configuration sources (JSON + env-vars)
+    var builder = WebApplication.CreateBuilder(args)
+                                .ConfigureAppSettings();
 
-    // --------------------Configure logging & configuration --------------------
-    builder.Host
-    .UseSerilog(
-        (ctx, services, cfg) => cfg
-            .ReadFrom.Configuration(ctx.Configuration)
-            .ReadFrom.Services(services)
-            .Enrich.FromLogContext());
+    // Configure structured logging via Serilog
+    builder.Host.UseObservability();
 
-    builder.Configuration
-       .AddJsonFile("serilog.json", optional: true, reloadOnChange: true)
-       .AddEnvironmentVariables();
+    // Delegate service registrations to Startup
+    var startup = new Startup(builder.Configuration);
+    startup.ConfigureServices(builder.Services);
 
-    // --------------------DI registrations --------------------
-    builder.Services.AddHealthChecks();
-    builder.Services.AddVersioningAndSwagger()
-                    .AddApplicationServices()
-                    .AddInfrastructureServices(builder.Configuration);
-
-    // Forwarded-headers so the app knows the real client IP / scheme
-    builder.Services.Configure<ForwardedHeadersOptions>(o =>
-    {
-        o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-        o.KnownNetworks.Clear();
-        o.KnownProxies.Clear();
-    });
-
+    // Build the WebApplication
     var app = builder.Build();
+    startup.Configure(app);
 
-    // --------------------HTTP pipeline --------------------
-    app.UseForwardedHeaders();
-    app.UseSwaggerAccordingToEnvironment()
-       .UseStaticAndRouting()
-       .MapAppEndpoints();
-
-    app.MapHealthChecks("/health");
-
-    app.Run();
+    // Run the host asynchronously
+    await app.RunAsync();
 }
 catch (Exception ex)
 {
+    // Log any host-level fatal errors and exit non-zero
     Log.Fatal(ex, "Host terminated unexpectedly");
-    throw;
+    Environment.Exit(1);
 }
 finally
 {
+    // Ensure buffered logs are flushed
     Log.CloseAndFlush();
 }
-
 
 /// <summary>
 /// Enables integration/functional tests to spin-up the host without
