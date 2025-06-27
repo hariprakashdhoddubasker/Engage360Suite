@@ -1,12 +1,13 @@
 ﻿using Asp.Versioning;
 using Engage360Suite.Application.Interfaces;
-using Engage360Suite.Application.Models;
 using Engage360Suite.Infrastructure.Configuration;
 using Engage360Suite.Infrastructure.Filters;
 using Engage360Suite.Infrastructure.Services;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Models;
 using Swashbuckle.AspNetCore.SwaggerGen;
+using Polly;
+using OpenTelemetry.Metrics;
 
 namespace Engage360Suite.Presentation.Extensions
 {
@@ -56,7 +57,7 @@ namespace Engage360Suite.Presentation.Extensions
                     Name = "X-API-KEY",
                     In = ParameterLocation.Header,
                     Type = SecuritySchemeType.ApiKey,
-                     Scheme = "ApiKeyScheme"
+                    Scheme = "ApiKeyScheme"
                 });
                 c.AddSecurityRequirement(new OpenApiSecurityRequirement
                 {
@@ -95,20 +96,50 @@ namespace Engage360Suite.Presentation.Extensions
             IConfiguration configuration)
         {
             // Bind options from configuration
-            services.Configure<PingerbotOptions>(configuration.GetSection("WhatsApp:Pingerbot"));
-            services.Configure<ServiceBusOptions>(configuration.GetSection("ServiceBus"));
+            services.AddOptions<PingerbotOptions>()
+                    .Bind(configuration.GetSection("WhatsApp:Pingerbot"))
+                    .ValidateOnStart();
 
-            // HttpClient for IWhatsAppService with Polly retry + circuit-breaker
-            services.AddHttpClient<IWhatsAppService, WhatsAppService>(client =>
-              {
-                  client.BaseAddress = new Uri("https://pingerbot.in/api/");
-              });
+            services.AddOptions<ServiceBusOptions>()
+                    .Bind(configuration.GetSection("ServiceBus"))
+                    .ValidateOnStart();
 
-            // Distributed queue + background worker
-            // services.AddSingleton<ILeadQueue, InMemoryLeadQueue>();
-            services.AddSingleton<ILeadQueue, ServiceBusLeadQueue>();
+            services.AddOptions<LeadQueueOptions>()
+                    .Bind(configuration.GetSection("LeadQueue"))
+                    .ValidateOnStart();
+
+            services.AddSingleton<IValidateOptions<PingerbotOptions>, PingerbotOptionsValidator>();
+            services.AddSingleton<IValidateOptions<ServiceBusOptions>, ServiceBusOptionsValidator>();
+            services.AddSingleton<IValidateOptions<LeadQueueOptions>, LeadQueueOptionsValidator>();
+
+            // Conditional queue implementation
+            if (configuration.GetValue<bool>("ServiceBus:Enabled"))
+                services.AddSingleton<ILeadQueue, ServiceBusLeadQueue>();   // prod / cloud
+            else
+                services.AddSingleton<ILeadQueue, InMemoryLeadQueue>();     // dev / single-node
+
+            services.AddHttpClient<IWhatsAppService, WhatsAppService>((sp, client) =>
+            {
+                var opts = sp.GetRequiredService<IOptions<PingerbotOptions>>().Value;
+                client.BaseAddress = new Uri(opts.BaseUrl);             // now configurable
+                client.Timeout = TimeSpan.FromSeconds(10);
+            })
+            .AddTransientHttpErrorPolicy(p =>                       // retry 3× w/ decorrelated jitter back-off
+                p.WaitAndRetryAsync(3, attempt =>
+                    TimeSpan.FromSeconds(Math.Pow(2, attempt))))
+            .AddTransientHttpErrorPolicy(p =>                       // circuit breaker after 5 faults / 30 s
+                p.CircuitBreakerAsync(5, TimeSpan.FromSeconds(30)));
+
+            // Background worker
             services.AddHostedService<LeadProcessingService>();
 
+            // Observability
+            services.AddOpenTelemetry()
+                    .WithMetrics(builder =>
+                    {
+                        builder.AddMeter("Engage360Suite.Infrastructure"); // ← matches InMemoryLeadQueue
+                        builder.AddPrometheusExporter();                   // or Azure Monitor exporter
+                    });
             return services;
         }
     }

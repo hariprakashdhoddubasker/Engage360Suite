@@ -13,7 +13,9 @@ namespace Engage360Suite.Presentation.Extensions
             app.UseForwardedHeaders();
             app.UseSwaggerAccordingToEnvironment()
                .UseStaticAndRouting()
-               .MapAppEndpoints();
+               .MapAppEndpoints()
+               .UseOpenTelemetryPrometheusScrapingEndpoint();
+            app.MapHealthChecks("/health");
             return app;
         }
 
@@ -45,15 +47,16 @@ namespace Engage360Suite.Presentation.Extensions
 
         public static WebApplication UseStaticAndRouting(this WebApplication app)
         {
-            app.UseHttpsRedirection();
-            app.UseRouting();
-            app.UseAuthorization();
+            app.UseHttpsRedirection()
+               .UseStaticFiles()
+               .UseRouting()
+               .UseAuthorization();
 
             return app;
         }
 
         public static WebApplication MapAppEndpoints(this WebApplication app)
-        {   
+        {
             app.MapControllers();
             app.MapStaticAssets();
             app.MapControllerRoute(
