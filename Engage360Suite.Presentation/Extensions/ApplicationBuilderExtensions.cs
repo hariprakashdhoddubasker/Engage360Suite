@@ -1,4 +1,7 @@
 ﻿using Asp.Versioning.ApiExplorer;
+using Engage360Suite.Presentation.Middlewares;
+using Microsoft.Extensions.Configuration;
+using Serilog;
 
 namespace Engage360Suite.Presentation.Extensions
 {
@@ -8,14 +11,18 @@ namespace Engage360Suite.Presentation.Extensions
         /// Sets up forwarded headers, Swagger UI, static files, routing,
         /// and maps controller & static endpoints.
         /// </summary>
-        public static WebApplication UseApiPipeline(this WebApplication app)
+        public static WebApplication UseApiPipeline(this WebApplication app, IConfiguration config)
         {
             app.UseForwardedHeaders();
+            app.UseMiddleware<GlobalExceptionMiddleware>();
             app.UseSwaggerAccordingToEnvironment()
                .UseStaticAndRouting()
                .MapAppEndpoints()
                .UseOpenTelemetryPrometheusScrapingEndpoint();
-            app.MapHealthChecks("/health");
+
+            // Map health-check endpoint from configuration
+            var healthPath = config.GetValue<string>("HealthChecks:EndpointPath", "/health");
+            app.MapHealthChecks(healthPath);
             return app;
         }
 
@@ -48,6 +55,7 @@ namespace Engage360Suite.Presentation.Extensions
         public static WebApplication UseStaticAndRouting(this WebApplication app)
         {
             app.UseHttpsRedirection()
+               .UseSerilogRequestLogging()
                .UseStaticFiles()
                .UseRouting()
                .UseAuthorization();
@@ -57,6 +65,7 @@ namespace Engage360Suite.Presentation.Extensions
 
         public static WebApplication MapAppEndpoints(this WebApplication app)
         {
+            app.MapHealthChecks("/health");
             app.MapControllers();
             app.MapStaticAssets();
             app.MapControllerRoute(

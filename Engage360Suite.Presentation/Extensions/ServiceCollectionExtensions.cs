@@ -3,11 +3,14 @@ using Engage360Suite.Application.Interfaces;
 using Engage360Suite.Infrastructure.Configuration;
 using Engage360Suite.Infrastructure.Filters;
 using Engage360Suite.Infrastructure.Services;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Models;
-using Swashbuckle.AspNetCore.SwaggerGen;
-using Polly;
 using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using Polly;
+using Polly.Extensions.Http;
+using Swashbuckle.AspNetCore.SwaggerGen;
 
 namespace Engage360Suite.Presentation.Extensions
 {
@@ -25,10 +28,21 @@ namespace Engage360Suite.Presentation.Extensions
         /// <returns>The same IServiceCollection for chaining.</returns>
         public static IServiceCollection AddDefaultServices(this IServiceCollection services, IConfiguration config)
         {
+            // Framework infra
             services.AddHealthChecks();
             services.AddVersioningAndSwagger();
             services.AddApplicationServices();
             services.AddInfrastructureServices(config);
+
+            // Forwarded-headers options
+            services.Configure<ForwardedHeadersOptions>(opts =>
+            {
+                opts.ForwardedHeaders =
+                    ForwardedHeaders.XForwardedFor |
+                    ForwardedHeaders.XForwardedProto;
+                opts.KnownNetworks.Clear();
+                opts.KnownProxies.Clear();
+            });
             return services;
         }
 
@@ -83,7 +97,7 @@ namespace Engage360Suite.Presentation.Extensions
         {
             services.AddControllersWithViews();
             services.AddScoped<ApiKeyActionFilter>();
-
+            services.AddProblemDetails();
             return services;
         }
 
@@ -95,52 +109,76 @@ namespace Engage360Suite.Presentation.Extensions
             this IServiceCollection services,
             IConfiguration configuration)
         {
-            // Bind options from configuration
-            services.AddOptions<PingerbotOptions>()
-                    .Bind(configuration.GetSection("WhatsApp:Pingerbot"))
-                    .ValidateOnStart();
+            // ──────────────────────────────────────────────────────
+            // 1. Observability – register FIRST so all later components
+            //    (MVC, HttpClient, custom meters) are auto-instrumented
+            // ──────────────────────────────────────────────────────
+            services.AddOpenTelemetry()
+                    .ConfigureResource(r => r.AddService(serviceName: "Engage360Suite.API"))
+                    .WithMetrics(builder =>
+                    {
+                        builder.AddMeter("Engage360Suite.Infrastructure")   // queue metrics
+                               .AddAspNetCoreInstrumentation()              // request metrics
+                               .AddHttpClientInstrumentation()              // outbound calls
+                               .AddPrometheusExporter();                    // /metrics endpoint
+                    });
 
-            services.AddOptions<ServiceBusOptions>()
-                    .Bind(configuration.GetSection("ServiceBus"))
-                    .ValidateOnStart();
+            // ──────────────────────────────────────────────────────
+            // 2. Options binding + validation (fail-fast)
+            //    – delegated to helper extension methods
+            // ──────────────────────────────────────────────────────
+            services.AddPingerbotOptions(configuration)
+                    .AddServiceBusOptions(configuration)
+                    .AddLeadQueueOptions(configuration)
+                    .AddSingleton<IValidateOptions<PingerbotOptions>, PingerbotOptionsValidator>()
+                    .AddSingleton<IValidateOptions<ServiceBusOptions>, ServiceBusOptionsValidator>()
+                    .AddSingleton<IValidateOptions<LeadQueueOptions>, LeadQueueOptionsValidator>();
 
-            services.AddOptions<LeadQueueOptions>()
-                    .Bind(configuration.GetSection("LeadQueue"))
-                    .ValidateOnStart();
+            // ──────────────────────────────────────────────────────
+            // 3. Conditional queue (exactly one singleton)
+            // ──────────────────────────────────────────────────────
+            services.AddSingleton<ServiceBusLeadQueue>();
+            services.AddSingleton<InMemoryLeadQueue>();
 
-            services.AddSingleton<IValidateOptions<PingerbotOptions>, PingerbotOptionsValidator>();
-            services.AddSingleton<IValidateOptions<ServiceBusOptions>, ServiceBusOptionsValidator>();
-            services.AddSingleton<IValidateOptions<LeadQueueOptions>, LeadQueueOptionsValidator>();
+            services.AddSingleton<ILeadQueue>(sp =>
+                configuration.GetValue<bool>("ServiceBus:Enabled")
+                            ? sp.GetRequiredService<ServiceBusLeadQueue>()
+                            : sp.GetRequiredService<InMemoryLeadQueue>());
 
-            // Conditional queue implementation
-            if (configuration.GetValue<bool>("ServiceBus:Enabled"))
-                services.AddSingleton<ILeadQueue, ServiceBusLeadQueue>();   // prod / cloud
-            else
-                services.AddSingleton<ILeadQueue, InMemoryLeadQueue>();     // dev / single-node
+            // ──────────────────────────────────────────────────────
+            // 4. Typed HttpClient with shared Polly resiliency policies
+            // ──────────────────────────────────────────────────────
+            var retryPolicy = GetRetryPolicy();
+            var circuitBreaker = GetCircuitBreakerPolicy();
 
             services.AddHttpClient<IWhatsAppService, WhatsAppService>((sp, client) =>
             {
                 var opts = sp.GetRequiredService<IOptions<PingerbotOptions>>().Value;
-                client.BaseAddress = new Uri(opts.BaseUrl);             // now configurable
+                client.BaseAddress = new Uri(opts.BaseUrl);
                 client.Timeout = TimeSpan.FromSeconds(10);
             })
-            .AddTransientHttpErrorPolicy(p =>                       // retry 3× w/ decorrelated jitter back-off
-                p.WaitAndRetryAsync(3, attempt =>
-                    TimeSpan.FromSeconds(Math.Pow(2, attempt))))
-            .AddTransientHttpErrorPolicy(p =>                       // circuit breaker after 5 faults / 30 s
-                p.CircuitBreakerAsync(5, TimeSpan.FromSeconds(30)));
+                .AddPolicyHandler(retryPolicy)
+                .AddPolicyHandler(circuitBreaker);
 
-            // Background worker
+            // ──────────────────────────────────────────────────────
+            // 5. Background worker
+            // ──────────────────────────────────────────────────────
             services.AddHostedService<LeadProcessingService>();
-
-            // Observability
-            services.AddOpenTelemetry()
-                    .WithMetrics(builder =>
-                    {
-                        builder.AddMeter("Engage360Suite.Infrastructure"); // ← matches InMemoryLeadQueue
-                        builder.AddPrometheusExporter();                   // or Azure Monitor exporter
-                    });
+            
             return services;
         }
+
+        // ──────────────────────────────────────────────────────────
+        //  Polly helpers – allocate once per AppDomain
+        // ──────────────────────────────────────────────────────────
+        private static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy() =>
+            HttpPolicyExtensions
+                .HandleTransientHttpError()
+                .WaitAndRetryAsync(3, attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt))); // 2s,4s,8s
+
+        private static IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy() =>
+            HttpPolicyExtensions
+                .HandleTransientHttpError()
+                .CircuitBreakerAsync(5, TimeSpan.FromSeconds(30));
     }
 }
