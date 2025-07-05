@@ -1,0 +1,46 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [ develop ]
+
+env:
+  DOTNET_VERSION: '9.0.x'
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging Environment
+    runs-on: ubuntu-latest
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Restore dependencies
+      run: dotnet restore
+    
+    - name: Build application
+      run: dotnet build --configuration Release --no-restore
+    
+    - name: Publish application
+      run: dotnet publish Engage360Suite.Presentation/Engage360Suite.Presentation.csproj --configuration Release --output ./publish --no-build
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: staging-build
+        path: ./publish/
+        retention-days: 1
+    
+    # Note: Add actual deployment steps here when you have staging environment
+    - name: Deploy to Staging (Placeholder)
+      run: |
+        echo "Deploying to staging environment..."
+        echo "Build completed successfully!"
+        echo "Artifacts ready for deployment"

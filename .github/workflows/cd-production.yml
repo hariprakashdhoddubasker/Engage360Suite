@@ -1,0 +1,51 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ master ]
+  release:
+    types: [ published ]
+
+env:
+  DOTNET_VERSION: '9.0.x'
+
+jobs:
+  deploy-production:
+    name: Deploy to Production Environment
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Restore dependencies
+      run: dotnet restore
+    
+    - name: Build application
+      run: dotnet build --configuration Release --no-restore
+    
+    - name: Run tests
+      run: dotnet test --configuration Release --no-build
+    
+    - name: Publish application
+      run: dotnet publish Engage360Suite.Presentation/Engage360Suite.Presentation.csproj --configuration Release --output ./publish --no-build
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: production-build
+        path: ./publish/
+        retention-days: 30
+    
+    # Note: Add actual deployment steps here when you have production environment
+    - name: Deploy to Production (Placeholder)
+      run: |
+        echo "Deploying to production environment..."
+        echo "Build completed successfully!"
+        echo "Production deployment ready"
